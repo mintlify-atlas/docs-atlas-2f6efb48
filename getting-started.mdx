@@ -1,0 +1,179 @@
+---
+title: "Getting started"
+description: "Install cross and compile your first Rust crate for a foreign target in minutes."
+---
+
+New to `cross`, cross-compilation, or container engines? This guide walks you through every step.
+
+## Installation
+
+<Steps>
+  <Step title="Install Rust via rustup">
+    `cross` requires a `rustup`-managed Rust installation.
+
+    **Linux and macOS**
+
+    Run the following command in a terminal and follow the prompts:
+
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ```
+
+    **Windows**
+
+    Download [rustup-init.exe](https://static.rust-lang.org/rustup/dist/i686-pc-windows-gnu/rustup-init.exe) or follow the [other installation methods](https://forge.rust-lang.org/infra/other-installation-methods.html).
+
+    **NixOS**
+
+    The default `rustup` install script will fail on NixOS. Use the package manager instead:
+
+    ```bash
+    nix-env -i rustup
+    rustup toolchain install stable
+    ```
+
+    <Note>
+      On some platforms you also need a C compiler (`gcc` or `clang`) for `rustc` and `cargo` to work. On Alpine Linux, run `apk add libgcc gcc musl-dev`. On NixOS, enter a shell with `nix-shell -p gcc rustup`.
+    </Note>
+  </Step>
+
+  <Step title="Install cross">
+    Once `cargo` is available, install `cross` using one of these methods:
+
+    **From source (recommended)**
+
+    ```bash
+    cargo install cross --git https://github.com/cross-rs/cross
+    ```
+
+    **From crates.io**
+
+    ```bash
+    cargo install cross
+    ```
+
+    **Using cargo-binstall (pre-built binary)**
+
+    If you have [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed, you can fetch a pre-compiled binary instead of compiling from source:
+
+    ```bash
+    cargo binstall cross
+    ```
+
+    **Pre-built release binary**
+
+    Download a binary directly from the [GitHub releases page](https://github.com/cross-rs/cross/releases) and place it on your `PATH`.
+  </Step>
+
+  <Step title="Install a container engine">
+    `cross` uses Docker or Podman to provide the cross compilation environment.
+
+    **Windows and macOS**
+
+    Install [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+    **Linux**
+
+    Choose one of:
+    - [Docker Engine](https://docs.docker.com/engine/install/ubuntu/) — add your user to the `docker` group or use [rootless mode](https://docs.docker.com/engine/security/rootless/).
+    - [Docker Desktop for Linux](https://docs.docker.com/desktop/install/linux-install/)
+    - [Podman](https://podman.io/getting-started/installation) — runs rootless by default; recommended on Linux.
+
+    <Note>
+      If you use rootless Docker, also set the environment variable `CROSS_ROOTLESS_CONTAINER_ENGINE=1`.
+    </Note>
+
+    **WSL2 (Windows)**
+
+    If you use Docker Desktop for Windows, make sure you enable the WSL2 backend. Follow the [WSL2 installation instructions](https://docs.microsoft.com/en-us/windows/wsl/install) and then enable the [WSL2 backend in Docker](https://docs.docker.com/desktop/windows/wsl/).
+
+    Verify your container engine is running:
+
+    ```bash
+    # or use podman, if installed
+    docker ps -a
+    ```
+  </Step>
+
+  <Step title="Start the Docker daemon (Linux only)">
+    On Linux, you may need to start the Docker daemon before using `cross`. This is only required once per boot.
+
+    ```bash
+    # Systems using systemd
+    sudo systemctl start docker
+
+    # Systems using SysVinit (including WSL2)
+    sudo service docker start
+    ```
+
+    Podman does not require a daemon.
+  </Step>
+</Steps>
+
+## Your first cross compilation
+
+Create a new binary crate and build it for a 64-bit ARM Linux target:
+
+```bash
+cargo init --bin hello
+cd hello
+cross run --target aarch64-unknown-linux-gnu
+```
+
+Expected output:
+
+```
+   Compiling hello v0.1.0 (/project)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.64s
+     Running `/linux-runner aarch64 /target/aarch64-unknown-linux-gnu/debug/hello`
+Hello, world!
+```
+
+`cross` automatically installs the required Rust target and pulls the Docker image containing the cross toolchain — no manual steps needed.
+
+## Your first cross test
+
+`cross test` runs your test suite on the target architecture using QEMU emulation:
+
+```bash
+cross test --target mips64-unknown-linux-gnuabi64
+```
+
+You can also use `cross rustc` to pass flags directly to the compiler:
+
+```bash
+cross rustc --target powerpc-unknown-linux-gnu --release -- -C lto
+```
+
+## Common issues
+
+<Accordion title="error: toolchain 'stable-x86_64-unknown-linux-gnu' does not support components">
+  Reinstall the stable toolchain:
+
+  ```bash
+  rustup toolchain uninstall stable-x86_64-unknown-linux-gnu
+  rustup toolchain install stable-x86_64-unknown-linux-gnu --force-non-host
+  ```
+</Accordion>
+
+<Accordion title="Cannot connect to the Docker daemon">
+  Make sure the Docker daemon is running:
+
+  ```bash
+  sudo systemctl start docker
+  ```
+
+  On Linux, also verify your user is in the `docker` group, or switch to rootless Docker or Podman.
+</Accordion>
+
+<Accordion title="Tests hang or never terminate">
+  QEMU emulation runs tests sequentially. If a test spawns threads, it is more likely to hang under QEMU. Isolate the test or run it with a timeout.
+</Accordion>
+
+<Accordion title="Choosing between Docker and Podman">
+  If both Docker and Podman are installed, `cross` defaults to Docker. To use Podman explicitly:
+
+  ```bash
+  CROSS_CONTAINER_ENGINE=podman cross build --target aarch64-unknown-linux-gnu
+  ```
+</Accordion>

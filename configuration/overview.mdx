@@ -1,0 +1,118 @@
+---
+title: "Configuration Overview"
+description: "Overview of all configuration methods for cross, including Cross.toml, Cargo.toml metadata, environment variables, and the CROSS_CONFIG env var."
+---
+
+`cross` supports four ways to configure its behavior. They can be combined and the priority order determines which value wins when a key is set in multiple places.
+
+## Configuration methods
+
+<CardGroup cols={2}>
+  <Card title="Cross.toml" icon="file-toml">
+    A dedicated `Cross.toml` file placed at the root of your Cargo project. This is the recommended approach for most projects.
+  </Card>
+  <Card title="Cargo.toml metadata" icon="gear">
+    Embed cross configuration inside your existing `Cargo.toml` under `[package.metadata.cross]`. Useful if you prefer a single config file.
+  </Card>
+  <Card title="CROSS_CONFIG env var" icon="terminal">
+    Point `cross` at a config file anywhere on disk using the `CROSS_CONFIG` environment variable.
+  </Card>
+  <Card title="Environment variables" icon="sliders">
+    Every config-file option can also be set directly as an environment variable. Additional runtime flags are available as env vars only.
+  </Card>
+</CardGroup>
+
+## Priority order
+
+When the same key is set in more than one place, `cross` resolves it with the following precedence (highest wins):
+
+1. **Environment variables** — always override everything else
+2. **Cross.toml** — overrides Cargo.toml metadata
+3. **Cargo.toml** (`package.metadata.cross`) — the lowest-priority source
+
+<Info>
+  `CROSS_CONFIG` does not change the priority order. It only changes *where* cross looks for the config file. The file it points to is still treated as a Cross.toml-level source.
+</Info>
+
+## Quick examples
+
+### Cross.toml
+
+Create a `Cross.toml` file in the same directory as your `Cargo.toml`:
+
+```toml
+[build]
+default-target = "aarch64-unknown-linux-gnu"
+
+[build.env]
+passthrough = ["RUST_LOG", "RUST_BACKTRACE"]
+
+[target.aarch64-unknown-linux-gnu]
+image = "my-registry/my-image:latest"
+```
+
+### Cargo.toml metadata
+
+Add a `[package.metadata.cross]` section to your existing `Cargo.toml` (or `[workspace.metadata.cross]` for workspace crates). The table structure is identical to `Cross.toml`:
+
+```toml
+[workspace.metadata.cross.target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get --assume-yes install libssl-dev:$CROSS_DEB_ARCH"
+]
+[workspace.metadata.cross.target.armv7-unknown-linux-gnueabi]
+image = "my/image:latest"
+[workspace.metadata.cross.build]
+env.volumes = ["A_DIRECTORY=/path/to/volume"]
+```
+
+For single-package crates, use `package.metadata.cross` instead:
+
+```toml
+[package.metadata.cross.build]
+default-target = "aarch64-unknown-linux-gnu"
+
+[package.metadata.cross.build.env]
+passthrough = ["RUST_LOG", "RUST_BACKTRACE"]
+
+[package.metadata.cross.target.aarch64-unknown-linux-gnu]
+image = "my-registry/my-image:latest"
+```
+
+### CROSS_CONFIG environment variable
+
+Point `cross` at a config file in a non-standard location:
+
+```bash
+CROSS_CONFIG=/path/to/my/Cross.toml cross build --target aarch64-unknown-linux-gnu
+```
+
+### Environment variable override
+
+Every config-file key has a corresponding environment variable. For example, to set the dockerfile for a target without touching any config file:
+
+```bash
+CROSS_TARGET_AARCH64_UNKNOWN_LINUX_GNU_DOCKERFILE=./Dockerfile cross build --target aarch64-unknown-linux-gnu
+```
+
+This is identical to having the following in `Cross.toml`:
+
+```toml
+[target.aarch64-unknown-linux-gnu]
+dockerfile = "./Dockerfile"
+```
+
+## Detailed references
+
+<CardGroup cols={2}>
+  <Card title="Config File" href="/configuration/config-file">
+    Full reference for all Cross.toml / Cargo.toml metadata keys, including build, env, dockerfile, zig, and per-target options.
+  </Card>
+  <Card title="Environment Variables" href="/configuration/environment-variables">
+    Complete list of environment variables recognized by cross, passthrough rules, and blocked variables.
+  </Card>
+  <Card title="Cargo Configuration" href="/configuration/cargo-configuration">
+    How to pass per-target flags to cargo and rustc during cross-compilation.
+  </Card>
+</CardGroup>

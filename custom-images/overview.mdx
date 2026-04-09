@@ -1,0 +1,96 @@
+---
+title: "Custom images overview"
+description: "When and how to extend cross with custom Docker images for your build targets."
+---
+
+`cross` ships default Docker images for every [supported target](/supported-targets). These images include a complete cross-compilation toolchain so you can build without any local setup. However, some projects need more than the defaults provide:
+
+- Extra system libraries (e.g. `libssl`, `libsqlite3`, or proprietary SDKs)
+- Non-default targets or toolchain variants
+- Custom environment variables or sysroot configuration
+- Packages only available outside Ubuntu's default repositories
+
+When you hit any of these cases, `cross` gives you three escalating options.
+
+## Three approaches
+
+<CardGroup cols={3}>
+  <Card title="Pre-build hooks" icon="terminal" href="/custom-images/pre-build-hooks">
+    Run apt-get commands or a shell script inside the container before your build starts. No Dockerfile required.
+  </Card>
+  <Card title="Custom Dockerfile" icon="docker" href="/custom-images/custom-dockerfile">
+    Write a `Dockerfile` that extends the official cross base image. Full control over the image layer.
+  </Card>
+  <Card title="Pre-built image" icon="box" href="/configuration/config-file#targettargetimage">
+    Point `cross` at an image you've already pushed to a registry. No build step at all.
+  </Card>
+</CardGroup>
+
+### When to use each approach
+
+| Approach | Best for | Limitation |
+|---|---|---|
+| **Pre-build hooks** | Installing a handful of Debian/Ubuntu packages quickly | Runs on every invocation; image is not cached between runs |
+| **Custom Dockerfile** | Reproducible, cached images with complex dependencies | Requires writing and maintaining a `Dockerfile` |
+| **Pre-built image** | Sharing a single image across a team or CI pipeline | You must build and push the image yourself |
+
+## Automatic target architecture on Debian
+
+Custom images generated from the `dockerfile` or `pre-build` configuration keys have access to the `CROSS_DEB_ARCH` environment variable. `cross` sets this automatically to the Debian architecture name that corresponds to your compilation target (for example, `arm64` when targeting `aarch64-unknown-linux-gnu`).
+
+You can use `$CROSS_DEB_ARCH` anywhere you need to install a cross-architecture package from the Ubuntu/Debian repositories without hard-coding a specific architecture string:
+
+```bash
+dpkg --add-architecture $CROSS_DEB_ARCH
+apt-get update && apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH
+```
+
+<Note>
+  `$CROSS_DEB_ARCH` is **only** available inside images built from the `dockerfile` or `pre-build` keys. It is not set when you use a fully pre-built image via `target.TARGET.image`.
+</Note>
+
+## Quick-start examples
+
+<Tabs>
+  <Tab title="Pre-build hook">
+    Add a few lines to `Cross.toml` — no Dockerfile needed:
+
+    ```toml
+    [target.aarch64-unknown-linux-gnu]
+    pre-build = [
+        "dpkg --add-architecture $CROSS_DEB_ARCH",
+        "apt-get update && apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH"
+    ]
+    ```
+
+    See [Pre-build hooks](/custom-images/pre-build-hooks) for the full reference.
+  </Tab>
+  <Tab title="Custom Dockerfile">
+    Create a `Dockerfile` next to your `Cargo.toml` and reference it from `Cross.toml`:
+
+    ```dockerfile
+    FROM ghcr.io/cross-rs/aarch64-unknown-linux-gnu:latest
+
+    RUN dpkg --add-architecture $CROSS_DEB_ARCH && \
+        apt-get update && \
+        apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH
+    ```
+
+    ```toml
+    [target.aarch64-unknown-linux-gnu]
+    dockerfile = "Dockerfile"
+    ```
+
+    See [Custom Dockerfile](/custom-images/custom-dockerfile) for the full reference.
+  </Tab>
+  <Tab title="Pre-built image">
+    Push your image to a registry and set the `image` key:
+
+    ```toml
+    [target.aarch64-unknown-linux-gnu]
+    image = "my/image:tag"
+    ```
+
+    See [`target.TARGET.image`](/configuration/config-file#targettargetimage) for tag shorthand and toolchain options.
+  </Tab>
+</Tabs>

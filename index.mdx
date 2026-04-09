@@ -1,97 +1,76 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "cross — Zero Setup Cross Compilation for Rust"
+description: "Cross compile and cross test Rust crates for any target architecture using Docker or Podman containers — no system configuration required."
 ---
 
-## Setting up
+`cross` gives you a drop-in replacement for `cargo` that transparently cross-compiles and cross-tests your Rust crates for any of 50+ supported target architectures, all without modifying your system toolchain.
 
-Get your documentation site up and running in minutes.
+```bash
+# Build for ARM64 Linux — it just works
+cross build --target aarch64-unknown-linux-gnu
 
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
+# Test on MIPS64 using QEMU — this also just works
+cross test --target mips64-unknown-linux-gnuabi64
+```
 
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Get Started" icon="rocket" href="/getting-started">
+    Install cross and build your first crate for a foreign target in minutes.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Supported Targets" icon="list-check" href="/supported-targets">
+    Browse all 50+ supported architectures including ARM, MIPS, PowerPC, RISC-V, s390x, and more.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Configuration" icon="sliders" href="/configuration/overview">
+    Configure cross behavior via Cross.toml, Cargo.toml metadata, or environment variables.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Custom Images" icon="docker" href="/custom-images/overview">
+    Extend the default Docker images with your own dependencies and Dockerfiles.
   </Card>
-</Columns>
+  <Card title="Remote Builds" icon="cloud" href="/advanced/remote-builds">
+    Use a remote Docker or Podman daemon to offload cross compilation to a CI server.
+  </Card>
+  <Card title="Recipes" icon="book-open" href="/guides/recipes">
+    Ready-to-use patterns for OpenSSL, sccache, C++ build systems, and more.
+  </Card>
+</CardGroup>
 
-## Create beautiful pages
+## Why cross?
 
-Everything you need to create world-class documentation.
+<CardGroup cols={2}>
+  <Card title="Zero system setup" icon="circle-check">
+    No cross-toolchain installation required. All compilers and sysroots live inside pre-built Docker images.
+  </Card>
+  <Card title="Identical to cargo" icon="equals">
+    Use the same commands you already know. `cross build` works exactly like `cargo build`.
+  </Card>
+  <Card title="Cross testing" icon="flask">
+    Run your test suite on any supported target via QEMU emulation — catch architecture-specific bugs before deployment.
+  </Card>
+  <Card title="Flexible configuration" icon="gear">
+    Fine-tune behavior per-target with `Cross.toml`, environment variables, or your existing `Cargo.toml`.
+  </Card>
+</CardGroup>
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+## Quick start
 
-## Need inspiration?
-
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Install Rust via rustup">
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ```
+  </Step>
+  <Step title="Install cross">
+    ```bash
+    cargo install cross --git https://github.com/cross-rs/cross
+    ```
+  </Step>
+  <Step title="Install Docker or Podman">
+    Install [Docker](https://www.docker.com/products/docker-desktop/) or [Podman](https://podman.io/getting-started/installation) as your container engine.
+  </Step>
+  <Step title="Cross compile your first crate">
+    ```bash
+    cross build --target aarch64-unknown-linux-gnu
+    ```
+    `cross` automatically pulls the right Docker image and Rust target — no further setup needed.
+  </Step>
+</Steps>

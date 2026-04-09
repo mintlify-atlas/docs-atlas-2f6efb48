@@ -1,0 +1,174 @@
+---
+title: "Remote Builds"
+description: "Use cross with a remote Docker or Podman daemon — ideal for CI environments where the container engine runs on a separate host."
+---
+
+Remote builds let `cross` work against a container engine running on a different machine. Instead of bind-mounting local directories into the container (which requires the daemon and the filesystem to share the same host), `cross` copies all relevant data into **data volumes** on the remote host and symlinks them to the paths the build expects.
+
+<Note>
+  Remote builds are the right choice when your CI runner executes jobs on one machine while the Docker or Podman daemon lives on another — for example, a Docker-in-Docker setup with a TCP-exposed daemon, or a remote podman socket.
+</Note>
+
+## Getting Started
+
+<Steps>
+  <Step title="Set CROSS_REMOTE=1">
+    Tell `cross` it is talking to a remote engine by exporting `CROSS_REMOTE=1` before running any `cross` command.
+  </Step>
+
+  <Step title="Point to the remote daemon">
+    **Docker** — set `DOCKER_HOST` to the remote daemon address, or configure a [Docker context](https://docs.docker.com/engine/context/working-with-contexts/) (no extra variable needed when a context is active):
+
+    ```bash
+    CROSS_REMOTE=1 DOCKER_HOST=tcp://docker:2375/ cross build --target arm-unknown-linux-gnueabihf
+    ```
+
+    **Podman / podman-remote** — register the remote connection with `podman system connection add`, mark it as the default, and set `CROSS_CONTAINER_ENGINE=podman`:
+
+    ```bash
+    podman system connection add cross tcp://localhost:8080 --default=true
+    CROSS_REMOTE=1 CROSS_CONTAINER_ENGINE=podman cross build --target arm-unknown-linux-gnueabihf
+    ```
+
+    <Info>
+      `cross` automatically detects whether `podman` or `podman-remote` is in use and adds the `--remote` flag when needed. Either binary works.
+    </Info>
+  </Step>
+</Steps>
+
+## Data Volumes
+
+Because bind mounts cannot span machines, `cross` creates a **data volume** mounted at `/cross` inside the container and copies all relevant data into it. To keep paths consistent with those on the host, every file is then symlinked to its expected location — for example, `/cross/home/user/project` becomes `/home/user/project` with the same metadata as on the host.
+
+By default `cross` does **not** copy:
+
+- The `cargo` registry
+- The target (build output) directory
+
+Both can be enabled via environment variables (see [Environment Variables](#environment-variables) below).
+
+### Persistent Data Volumes
+
+Copying the entire toolchain on every build can be slow. `cross` supports **persistent data volumes** that cache the toolchain across builds. Create one for the current toolchain with:
+
+```bash
+cross-util volumes create
+
+# Also copy the cargo registry into the volume (needed for private dependencies)
+cross-util volumes create --copy-registry
+
+# Create a volume for a specific toolchain
+cross-util volumes create --toolchain stable
+```
+
+`cross` detects the persistent volume automatically and prefers it over a single-use volume. The volume also stores project files and reflects local changes on every build by syncing only what has changed.
+
+## Managing Data with cross-util
+
+`cross-util` is a companion binary installed alongside `cross` that manages images, volumes, and containers created by `cross`. All `cross-util` commands accept `--engine <ENGINE>` to select a specific container engine and the global flags `--verbose`, `--quiet`, and `--color`.
+
+<Note>
+  All mutating `cross-util` commands (remove, prune) default to a **dry run**. Pass `--execute` to actually perform the operation.
+</Note>
+
+### Volume Commands
+
+```bash
+# List all persistent data volumes
+cross-util volumes list
+
+# Create a persistent data volume for the current toolchain
+cross-util volumes create
+
+# Remove the persistent data volume for the current toolchain
+cross-util volumes remove
+
+# Remove all persistent data volumes (dry run by default; pass --execute to apply)
+cross-util volumes remove-all --execute
+
+# Prune all data volumes not currently attached to a container (dry run by default)
+cross-util volumes prune --execute
+```
+
+<Warning>
+  `cross-util volumes prune` removes **all** unused volumes on the host, not just those created by `cross`. Use with care.
+</Warning>
+
+### Container Commands
+
+```bash
+# List all hanging containers
+cross-util containers list
+
+# Stop and remove all hanging containers (dry run by default; pass --execute to apply)
+cross-util containers remove-all --execute
+```
+
+### Image Commands
+
+```bash
+# List all cross images in local storage
+cross-util images list
+
+# List images for a specific target
+cross-util images list aarch64-unknown-linux-gnu
+
+# List images in JSON format
+cross-util images list --format json
+
+# Remove all cross images (dry run by default; pass --execute to apply)
+cross-util images remove --execute
+
+# Remove images for a specific target
+cross-util images remove aarch64-unknown-linux-gnu --execute
+
+# Remove local (development) images too
+cross-util images remove --local --execute
+```
+
+### Clean Command
+
+The `clean` subcommand removes all data that `cross` has created in one step: containers, images, volumes, and temporary files.
+
+```bash
+# Dry run — shows what would be removed
+cross-util clean
+
+# Actually remove everything
+cross-util clean --execute
+
+# Also remove local (development) images
+cross-util clean --local --execute
+```
+
+### Run Command
+
+Run an arbitrary shell command inside a cross container for a given target:
+
+```bash
+cross-util run --target aarch64-unknown-linux-gnu -- "uname -m"
+
+# Interactive session
+cross-util run --target aarch64-unknown-linux-gnu --interactive -- "bash"
+```
+
+## Private Dependencies
+
+Private dependencies are downloaded to the **host** cargo registry using the host toolchain. Because the remote daemon has no access to SSH keys or other host credentials, you must copy the registry to the remote host:
+
+```bash
+CROSS_REMOTE_COPY_REGISTRY=1 CROSS_REMOTE=1 cross build --target arm-unknown-linux-gnueabihf
+```
+
+<Note>
+  Private registry support with remote builds has not been extensively tested and may only work with single-use volumes.
+</Note>
+
+## Environment Variables
+
+| Variable | Description |
+|---|---|
+| `CROSS_REMOTE` | Inform `cross` it is using a remote container engine; use data volumes instead of bind mounts. |
+| `CROSS_REMOTE_COPY_REGISTRY` | Copy the `cargo` registry and git directories. Required for private SSH dependencies. |
+| `CROSS_REMOTE_COPY_CACHE` | Copy all directories, including those tagged with `CACHETAG.DIR` (cache directory tags). |
+| `CROSS_REMOTE_SKIP_BUILD_ARTIFACTS` | Do not copy generated build artifacts back to the host after the build. Artifacts remain in the volume when using persistent data volumes. |

@@ -1,0 +1,76 @@
+---
+title: "Introduction"
+description: "cross is a zero-setup cross compilation and cross testing tool for Rust crates, powered by Docker or Podman containers."
+---
+
+`cross` lets you build and test Rust crates for dozens of targets without touching your system installation. It wraps `cargo` with an identical CLI, pulling in a pre-built container image that includes the right cross toolchain and cross-compiled libraries for your target.
+
+## What problem does cross solve?
+
+Setting up a cross compilation toolchain manually requires downloading the right linker, sysroot, and C libraries for each target — a process that varies by OS, differs between targets, and is easy to break. `cross` eliminates that work entirely: you specify a `--target` flag and it handles everything else inside a container.
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Zero setup" icon="circle-check">
+    No manual toolchain or sysroot installation. `cross` downloads the right container image automatically on first use.
+  </Card>
+  <Card title="50+ supported targets" icon="globe">
+    Linux (glibc and musl), Android, Windows (MinGW), FreeBSD, Solaris, bare-metal ARM, WASM, and more.
+  </Card>
+  <Card title="Cross testing" icon="flask">
+    Run `cross test` to execute your test suite on foreign architectures using QEMU user-mode emulation — no hardware required.
+  </Card>
+  <Card title="Drop-in cargo replacement" icon="arrow-right-arrow-left">
+    `cross` accepts the exact same CLI as `cargo`: subcommands, flags, and arguments all work identically.
+  </Card>
+</CardGroup>
+
+## How it works
+
+When you run a `cross` command, it:
+
+1. Reads the `--target` flag to determine which container image to use.
+2. Pulls the pre-built image from `ghcr.io/cross-rs/` (once, then cached).
+3. Mounts your project and Rust toolchain into the container.
+4. Runs the requested `cargo` subcommand inside the container using the target's cross compiler and sysroot.
+
+For `cross test`, `cross run`, and `cross bench`, QEMU user-mode emulation is also launched inside the container so the compiled foreign binary can execute on your x86_64 host.
+
+<Note>
+  Testing with QEMU runs unit tests **sequentially** because QEMU becomes unstable with multiple threads. Tests that spawn threads may fail or hang.
+</Note>
+
+## Requirements
+
+### Rust
+
+`cross` requires a `rustup`-managed Rust installation. The minimum supported Rust version (MSRV) for `cross` itself is **1.85.0**.
+
+Install rustup from [rustup.rs](https://rustup.rs/).
+
+### Container engine
+
+One of the following is required. If both are installed, `cross` defaults to Docker.
+
+| Engine | Minimum version |
+|--------|----------------|
+| [Docker](https://www.docker.com) | 20.10 (API 1.40) |
+| [Podman](https://podman.io) | 3.4.0 |
+
+<Warning>
+  On Linux, Docker requires your user to be in the `docker` group, or you must use rootless Docker. See the [Docker post-installation steps](https://docs.docker.com/engine/install/linux-postinstall/#manage-docker-as-a-non-root-user) for details.
+</Warning>
+
+Cross testing also requires a Linux kernel with `binfmt_misc` support so QEMU can transparently execute foreign binaries.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Getting started" href="/getting-started">
+    Install cross and compile your first crate for a foreign target.
+  </Card>
+  <Card title="Supported targets" href="/supported-targets">
+    Browse the full list of targets and their test support status.
+  </Card>
+</CardGroup>

@@ -1,0 +1,185 @@
+---
+title: "Pre-build hooks"
+description: "Run apt-get commands or a shell script inside the cross container before your build starts — no Dockerfile required."
+---
+
+Pre-build hooks are the quickest way to add dependencies to a `cross` build environment. You configure them entirely in `Cross.toml`, and `cross` runs them inside the container before invoking `cargo build`.
+
+## How pre-build works
+
+When `cross` starts a container for your build, it runs your pre-build commands (or script) as a `RUN` step baked into an ephemeral image layer on top of the default image. The resulting image is used for your build.
+
+<Info>
+  Pre-build hooks run at container image build time — before the Rust compilation starts — so any packages installed are available during the build.
+</Info>
+
+## Two forms
+
+### List of commands
+
+Pass an array of shell commands. Each command is a separate `RUN` layer:
+
+```toml
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update",
+    "apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH"
+]
+```
+
+You can chain multiple commands in a single entry using `&&`:
+
+```toml
+[target.x86_64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH"
+]
+```
+
+### Script file reference
+
+Pass a path to a shell script. The path is relative to the workspace root (or to the directory containing your `Cargo.toml` when `--manifest-path` is used):
+
+```toml
+[target.aarch64-unknown-linux-gnu]
+pre-build = "./scripts/my-script.sh"
+```
+
+`cross` copies the script into the container and invokes it as:
+
+```
+RUN ./pre-build-script $CROSS_TARGET
+```
+
+The script receives the target triple as its first positional argument via `$CROSS_TARGET`.
+
+**Example script:**
+
+```bash
+#!/usr/bin/env bash
+
+apt-get install libssl-dev -y
+```
+
+<Note>
+  Make your script executable (`chmod +x`) before running `cross`. The script must include a valid shebang line (e.g. `#!/usr/bin/env bash`).
+</Note>
+
+## Available variables
+
+| Variable | Description | Available in |
+|---|---|---|
+| `$CROSS_DEB_ARCH` | Debian architecture name for the target (e.g. `arm64`) | Command list and scripts |
+| `$CROSS_TARGET` | Full Rust target triple (e.g. `aarch64-unknown-linux-gnu`) | Scripts only (passed as `$1`) |
+
+### `CROSS_DEB_ARCH` in detail
+
+`cross` automatically sets `$CROSS_DEB_ARCH` to the Debian/Ubuntu architecture name that corresponds to your compilation target. This lets you install cross-architecture packages without hard-coding the architecture:
+
+```toml
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH"
+]
+```
+
+## Scope: per-target vs. global
+
+### `target.TARGET.pre-build`
+
+Applies only to the specified target:
+
+```toml
+[target.aarch64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH"
+]
+```
+
+### `build.pre-build`
+
+Applies to **all** targets that do not have a per-target `pre-build` entry:
+
+```toml
+[build]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get --assume-yes install libssl-dev:$CROSS_DEB_ARCH"
+]
+```
+
+<Info>
+  A `target.TARGET.pre-build` entry takes precedence over `build.pre-build` for that target. The two are not merged.
+</Info>
+
+## Examples
+
+<Tabs>
+  <Tab title="Install libssl-dev">
+    The most common use case — adding a cross-architecture OpenSSL development package:
+
+    ```toml
+    [target.aarch64-unknown-linux-gnu]
+    pre-build = [
+        "dpkg --add-architecture $CROSS_DEB_ARCH",
+        "apt-get update && apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH"
+    ]
+    ```
+  </Tab>
+  <Tab title="Add a Debian architecture">
+    Register a new architecture with `dpkg` so you can install its packages:
+
+    ```toml
+    [target.x86_64-unknown-linux-gnu]
+    pre-build = [
+        "dpkg --add-architecture $CROSS_DEB_ARCH",
+        "apt-get update && apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH"
+    ]
+    ```
+  </Tab>
+  <Tab title="Shell script">
+    Delegate to a script when the logic is too complex for a one-liner:
+
+    ```toml
+    [target.aarch64-unknown-linux-gnu]
+    pre-build = "./scripts/install-deps.sh"
+    ```
+
+    ```bash
+    #!/usr/bin/env bash
+    # scripts/install-deps.sh
+    # $1 is the target triple, e.g. aarch64-unknown-linux-gnu
+
+    apt-get install libssl-dev -y
+    ```
+  </Tab>
+  <Tab title="FreeBSD packages">
+    Use the FreeBSD helper scripts available in cross's FreeBSD images:
+
+    ```toml
+    [target.x86_64-unknown-freebsd]
+    pre-build = ["""
+    export FREEBSD_MIRROR=$(/freebsd-fetch-best-mirror.sh) &&
+    /freebsd-setup-packagesite.sh &&
+    /freebsd-install-package.sh xen-tools
+    """]
+    ```
+  </Tab>
+</Tabs>
+
+## Pre-build vs. custom Dockerfile
+
+Both approaches modify the container image, but they have different trade-offs:
+
+| | Pre-build hooks | Custom Dockerfile |
+|---|---|---|
+| **Configuration** | `Cross.toml` only | `Dockerfile` + `Cross.toml` |
+| **Caching** | Rebuilt on every run | Cached as a normal Docker image layer |
+| **Script support** | Yes (file reference) | Full Dockerfile `RUN` flexibility |
+| **Best for** | Simple package installs | Complex or reproducible image builds |
+
+For more involved customisations, see [Custom Dockerfile](/custom-images/custom-dockerfile).

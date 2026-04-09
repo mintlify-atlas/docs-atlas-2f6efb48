@@ -1,0 +1,356 @@
+---
+title: "Troubleshooting"
+description: "Solutions to common problems encountered when using cross, including toolchain errors, Docker issues, QEMU limitations, and debugging techniques."
+---
+
+This page covers common issues and how to resolve them.
+
+## Toolchain errors
+
+<AccordionGroup>
+
+<Accordion title='"toolchain does not support components" error'>
+
+**Symptom:**
+
+```
+error: toolchain 'stable-x86_64-unknown-linux-gnu' does not support components
+```
+
+**Cause:** The locally installed toolchain is in a broken or incomplete state,
+often caused by an interrupted install or a `rustup` upgrade.
+
+**Fix:** Uninstall and reinstall the affected toolchain:
+
+```bash
+rustup toolchain uninstall stable-x86_64-unknown-linux-gnu
+rustup toolchain install stable-x86_64-unknown-linux-gnu --force-non-host
+```
+
+Replace `stable` with `beta` or `nightly` if you are using a different channel.
+
+</Accordion>
+
+<Accordion title="Minimum Rust version (MSRV)">
+
+`cross` requires **Rust 1.85.0** or later. It may compile on older versions, but
+this is not guaranteed and may break in any patch release.
+
+Check your installed version:
+
+```bash
+rustc --version
+```
+
+If the version is older than 1.85.0, update Rust:
+
+```bash
+rustup update stable
+```
+
+<Note>
+Some cross-compilation targets require a later Rust version than the minimum.
+Consult the target's documentation if you encounter target-specific build errors.
+</Note>
+
+</Accordion>
+
+</AccordionGroup>
+
+## Docker and container engine issues
+
+<AccordionGroup>
+
+<Accordion title="Docker daemon is not running">
+
+**Symptom:** `cross` fails immediately with an error about the Docker daemon or
+the Docker socket not being available.
+
+**Fix:** Start the Docker daemon. On systems using systemd:
+
+```bash
+sudo systemctl start docker
+```
+
+On systems using SysVinit (including WSL2):
+
+```bash
+sudo service docker start
+```
+
+To confirm the daemon is running:
+
+```bash
+docker ps -a
+```
+
+To start Docker automatically on boot with systemd:
+
+```bash
+sudo systemctl enable docker
+```
+
+</Accordion>
+
+<Accordion title="Permission denied on the Docker socket">
+
+**Symptom:**
+
+```
+permission denied while trying to connect to the Docker daemon socket at
+unix:///var/run/docker.sock
+```
+
+**Cause:** The current user does not have permission to access the Docker socket.
+
+**Fix — add user to the docker group:**
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+<Warning>
+Adding a user to the `docker` group grants root-equivalent access to the system.
+Consider using rootless Docker as a more secure alternative.
+</Warning>
+
+**Fix — use rootless Docker:**
+
+Install and configure [rootless Docker](https://docs.docker.com/engine/security/rootless/),
+then set the following environment variable so `cross` knows the engine runs without root:
+
+```bash
+CROSS_ROOTLESS_CONTAINER_ENGINE=1 cross build --target aarch64-unknown-linux-gnu
+```
+
+**Fix — use Podman instead:**
+
+Podman runs rootless by default. Set the container engine explicitly:
+
+```bash
+CROSS_CONTAINER_ENGINE=podman cross build --target aarch64-unknown-linux-gnu
+```
+
+</Accordion>
+
+<Accordion title="Selecting the container engine">
+
+By default, `cross` tries Docker first, then Podman. To pin a specific engine,
+set `CROSS_CONTAINER_ENGINE` to the binary name or full path:
+
+```bash
+# Use Podman
+CROSS_CONTAINER_ENGINE=podman cross build --target aarch64-unknown-linux-gnu
+
+# Use a specific Docker binary path
+CROSS_CONTAINER_ENGINE=/usr/local/bin/docker cross build --target aarch64-unknown-linux-gnu
+```
+
+</Accordion>
+
+<Accordion title="Docker-in-Docker: overlayfs2 requirement">
+
+When running `cross` from inside a container (Docker-in-Docker), `cross` mounts
+the parent container's filesystem into the child container using overlayfs. This
+requires the host Docker daemon to use the **overlayfs2** storage driver.
+
+Other storage drivers (`vfs`, `devicemapper`, `btrfs`, etc.) are not supported
+for this use case.
+
+Check the current storage driver:
+
+```bash
+docker info | grep "Storage Driver"
+```
+
+If overlayfs2 is not available, consider using a remote Docker daemon with
+`CROSS_REMOTE=1` instead, which uses data volumes and does not require overlayfs2.
+
+Also ensure `CROSS_CONTAINER_IN_CONTAINER=true` is set when running `cross` from
+inside a container:
+
+```bash
+CROSS_CONTAINER_IN_CONTAINER=true cross build --target aarch64-unknown-linux-gnu
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## Finding the right target triple
+
+If you are unsure which Rust target triple to use, you can list all targets known
+to your installed toolchain:
+
+```bash
+rustup target list
+```
+
+To list only targets that have a pre-built `cross` image available, check the
+[supported targets table](/supported-targets) or browse the images at
+`ghcr.io/cross-rs/`.
+
+Common target triples for reference:
+
+| Architecture | OS | ABI | Triple |
+|---|---|---|---|
+| 64-bit ARM | Linux | glibc | `aarch64-unknown-linux-gnu` |
+| 64-bit ARM | Linux | musl | `aarch64-unknown-linux-musl` |
+| 32-bit ARMv7 | Linux | glibc hard-float | `armv7-unknown-linux-gnueabihf` |
+| 64-bit x86 | Linux | musl | `x86_64-unknown-linux-musl` |
+| 64-bit x86 | Windows | GNU | `x86_64-pc-windows-gnu` |
+| 64-bit RISC-V | Linux | glibc | `riscv64gc-unknown-linux-gnu` |
+| 64-bit PowerPC LE | Linux | glibc | `powerpc64le-unknown-linux-gnu` |
+
+## QEMU issues in cross test
+
+<AccordionGroup>
+
+<Accordion title="Tests run sequentially and are slow">
+
+`cross test` executes unit tests **sequentially** because QEMU becomes unstable
+when multiple threads are spawned concurrently. This is expected behaviour, not a bug.
+
+If your test suite takes too long, consider:
+
+- Running only a subset of tests: `cross test --target <target> -- my_module`
+- Skipping QEMU-based testing for targets where build-only validation is sufficient
+- Using a native CI runner for the target architecture where possible
+
+</Accordion>
+
+<Accordion title="Tests hang or never terminate">
+
+If a unit test spawns threads (e.g., uses `std::thread::spawn`, `tokio::spawn`,
+or a thread pool), it may hang or deadlock under QEMU emulation.
+
+QEMU's threading emulation has known limitations. Tests that rely on concurrent
+execution or timing-sensitive thread interactions are the most common cause of hangs.
+
+Options:
+
+- Annotate flaky threaded tests with `#[ignore]` and run them only on native targets
+- Use `cross build` only for the affected target and run tests in a native emulator
+  or device
+
+</Accordion>
+
+<Accordion title="QEMU STRACE: tracing system calls">
+
+To get a backtrace of system calls made by a foreign (non-x86_64) binary, set
+`QEMU_STRACE=1` when using `cross run`:
+
+```bash
+QEMU_STRACE=1 cross run --target aarch64-unknown-linux-gnu
+```
+
+Example output:
+
+```
+9 brk(NULL) = 0x0000004000023000
+9 uname(0x4000823128) = 0
+9 write(1,0xa06320,14)Hello, world!
+ = 14
+9 sigaltstack(0x4000823588,(nil)) = 0
+9 munmap(0x0000004000b16000,16384) = 0
+9 exit_group(0)
+```
+
+This is useful for diagnosing system call failures, missing capabilities, or
+unexpected signal handling in cross-compiled binaries.
+
+<Note>
+`QEMU_STRACE` requires `cross run`, not `cross build` or `cross test`. It is
+available in `cross` v0.1.9 and later.
+</Note>
+
+</Accordion>
+
+</AccordionGroup>
+
+## Debugging cross itself
+
+<AccordionGroup>
+
+<Accordion title="Enable debug output with CROSS_DEBUG">
+
+Set `CROSS_DEBUG=1` to print detailed internal information about how `cross` is
+operating: image selection, container invocation arguments, volume mounts, and
+environment variable passthrough.
+
+```bash
+CROSS_DEBUG=1 cross build --target aarch64-unknown-linux-gnu
+```
+
+This is the first thing to try when a build fails with no obvious error message, or
+when `cross` appears to be using the wrong image or configuration.
+
+</Accordion>
+
+<Accordion title="Warnings treated as errors in CI">
+
+When running in a CI environment, `cross` automatically treats its own warnings as
+errors (panics on the first warning). This can surface misconfiguration earlier.
+
+To replicate this behaviour locally:
+
+```bash
+CROSS_NO_WARNINGS=1 cross build --target aarch64-unknown-linux-gnu
+```
+
+To suppress this behaviour even in CI:
+
+```bash
+CROSS_NO_WARNINGS=0 cross build --target aarch64-unknown-linux-gnu
+```
+
+</Accordion>
+
+<Accordion title="Specifying a custom config file path">
+
+By default, `cross` looks for `Cross.toml` in the project root, or falls back to
+`[workspace.metadata.cross]` in `Cargo.toml`. To use a config file in a different
+location:
+
+```bash
+CROSS_CONFIG=/path/to/my-cross-config.toml cross build --target aarch64-unknown-linux-gnu
+```
+
+</Accordion>
+
+</AccordionGroup>
+
+## Remote Docker daemon issues
+
+<AccordionGroup>
+
+<Accordion title="Build artifacts not returned after remote build">
+
+When using `CROSS_REMOTE=1`, build artifacts are copied back to the host after the
+build completes. If you do not need the artifacts copied back (e.g., in a CI pipeline
+that only checks whether the build succeeds), you can skip this step to save time:
+
+```bash
+CROSS_REMOTE=1 CROSS_REMOTE_SKIP_BUILD_ARTIFACTS=1 \
+  cross build --target arm-unknown-linux-gnueabihf
+```
+
+</Accordion>
+
+<Accordion title="Private dependencies fail in remote builds">
+
+Private Cargo dependencies (fetched via SSH or authenticated HTTPS) are downloaded
+to the local host registry. When using a remote Docker daemon, the registry is not
+copied to the remote host by default, causing the build to fail.
+
+**Fix:** Copy the registry to the remote host:
+
+```bash
+CROSS_REMOTE=1 CROSS_REMOTE_COPY_REGISTRY=1 \
+  cross build --target arm-unknown-linux-gnueabihf
+```
+
+</Accordion>
+
+</AccordionGroup>

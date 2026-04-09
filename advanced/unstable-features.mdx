@@ -1,0 +1,55 @@
+---
+title: "Unstable Features"
+description: "Opt-in features available only on the nightly Rust channel that may change or be removed without notice."
+---
+
+Certain features in `cross` are gated behind an **unstable** flag. These features:
+
+- Are **nightly-only** — they are ignored when using stable or beta Rust channels.
+- **May be removed at any time**, particularly if the underlying Rust feature is stabilized or dropped.
+- Are not covered by any stability guarantee.
+
+<Warning>
+  Do not rely on unstable features for production builds. They exist to expose experimental functionality for early testing and feedback.
+</Warning>
+
+## How to Use Unstable Features
+
+Unstable features are enabled by setting the corresponding environment variable to `true` before running `cross`. Your active Rust toolchain must be a **nightly** channel build — switching can be done with `rustup`:
+
+```bash
+rustup override set nightly
+```
+
+Then export the feature variable and run `cross` as normal:
+
+```bash
+CROSS_UNSTABLE_ENABLE_DOCTESTS=true cross test --target aarch64-unknown-linux-gnu
+```
+
+## Available Unstable Features
+
+### `CROSS_UNSTABLE_ENABLE_DOCTESTS`
+
+Enable or disable running doctests during `cross test`.
+
+| Value | Behavior |
+|---|---|
+| `true` | Doctests are run. |
+| `false` | Doctests are skipped. |
+
+**Example — enable doctests:**
+
+```bash
+CROSS_UNSTABLE_ENABLE_DOCTESTS=true cross test --target aarch64-unknown-linux-gnu
+```
+
+**Example — disable doctests:**
+
+```bash
+CROSS_UNSTABLE_ENABLE_DOCTESTS=false cross test --target aarch64-unknown-linux-gnu
+```
+
+<Note>
+  This feature only takes effect when running on a nightly Rust toolchain. On stable or beta channels the variable is ignored.
+</Note>

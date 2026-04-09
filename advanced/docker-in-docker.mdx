@@ -1,0 +1,74 @@
+---
+title: "Docker in Docker"
+description: "Run cross inside a container by sharing the host Docker daemon via socket — a common pattern for CI pipelines and development containers."
+---
+
+Running `cross` inside a container requires the container to reach the **host's** Docker daemon. The standard approach is to mount the daemon's Unix socket into the container. `cross` can then spin up sibling containers for cross compilation while still finding and mounting the correct host filesystem paths.
+
+<Note>
+  This pattern is sometimes called "Docker-in-Docker" or "DinD", but it does not nest Docker — it shares the host daemon. No privileged mode or nested daemon is required.
+</Note>
+
+## When You Need This
+
+- CI pipelines where the job runner itself is a container (GitHub Actions self-hosted runners, GitLab CI Docker executor, Jenkins Docker agent, etc.)
+- Development images that bundle `cross` alongside your Rust toolchain
+- Any workflow where `cross` cannot be installed directly on the host
+
+## Setup
+
+<Steps>
+  <Step title="Mount the Docker socket">
+    Pass `-v /var/run/docker.sock:/var/run/docker.sock` when starting your container so `cross` can reach the host daemon:
+
+    ```bash
+    docker run \
+      -v /var/run/docker.sock:/var/run/docker.sock \
+      -v .:/project \
+      -w /project \
+      my/development-image:tag \
+      cross build --target mips64-unknown-linux-gnuabi64
+    ```
+  </Step>
+
+  <Step title="Set CROSS_CONTAINER_IN_CONTAINER=true">
+    Tell `cross` it is running inside a container. This enables `cross` to locate the correct host paths for the project directory and the Rust toolchain installed in the parent container:
+
+    ```bash
+    CROSS_CONTAINER_IN_CONTAINER=true cross build --target mips64-unknown-linux-gnuabi64
+    ```
+
+    The variable is most conveniently set inside the image itself (see the Dockerfile example below).
+  </Step>
+</Steps>
+
+## Example CI/Development Dockerfile
+
+```dockerfile
+FROM rust:1
+
+# Inform cross that it is running inside a container
+ENV CROSS_CONTAINER_IN_CONTAINER=true
+
+# Install cross
+RUN cargo install cross
+```
+
+Build and use this image as your CI job container or devcontainer. Mount the Docker socket and your project at runtime as shown in the `docker run` example above.
+
+## Limitations
+
+<Warning>
+  **overlayfs2 only** — Finding the mount point for the container's root directory is currently supported only for the `overlayfs2` storage driver. Other storage drivers are not supported.
+</Warning>
+
+- **Parent container lifecycle**: The child cross-compilation container mounts the parent container's overlayfs. If the parent container stops before the child finishes, Docker cannot unmount the overlayfs correctly. Always allow the child container to complete before stopping the parent.
+- The image running `cross` must have Rust development tools installed (e.g. `rustup`, the target toolchain).
+
+## Rootless Docker
+
+If you are using rootless Docker, set `CROSS_ROOTLESS_CONTAINER_ENGINE=1` to inform `cross` of the rootless environment:
+
+```bash
+CROSS_ROOTLESS_CONTAINER_ENGINE=1 cross build --target aarch64-unknown-linux-gnu
+```

@@ -1,0 +1,94 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "cross",
+  "projectDescription": "A zero-setup cross-compilation and cross-testing CLI tool for Rust crates that uses Docker or Podman containers to build and test for any supported target architecture.",
+  "theme": "aspen",
+  "primaryColor": "#94cb04",
+  "lightColor": "#545454",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "getting-started",
+              "supported-targets"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/overview",
+              "configuration/config-file",
+              "configuration/environment-variables",
+              "configuration/cargo-configuration"
+            ]
+          },
+          {
+            "group": "Custom Images",
+            "pages": [
+              "custom-images/overview",
+              "custom-images/custom-dockerfile",
+              "custom-images/pre-build-hooks"
+            ]
+          },
+          {
+            "group": "Advanced Usage",
+            "pages": [
+              "advanced/remote-builds",
+              "advanced/docker-in-docker",
+              "advanced/zig-cc",
+              "advanced/unstable-features"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/recipes",
+              "guides/ci-cd",
+              "guides/troubleshooting"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Zero-setup cross compilation for 50+ Rust targets using Docker/Podman containers",
+    "Cross testing via QEMU emulation — run tests for non-native architectures",
+    "Drop-in replacement for Cargo CLI with identical interface",
+    "Flexible configuration via Cross.toml, Cargo.toml metadata, or environment variables",
+    "Custom Docker image support with pre-build hooks and Dockerfile overrides",
+    "Remote container engine support for CI/CD environments",
+    "Zig CC support for cross-compiling to multiple glibc versions with a single image",
+    "Docker-in-Docker support for containerized CI environments"
+  ],
+  "publicApiSurface": [
+    "cross build --target <TARGET>",
+    "cross test --target <TARGET>",
+    "cross run --target <TARGET>",
+    "cross check --target <TARGET>",
+    "cross rustc --target <TARGET>",
+    "cross rustdoc --target <TARGET>",
+    "cross clippy --target <TARGET>",
+    "cross bench --target <TARGET>",
+    "cross-util volumes create|list|remove|remove-all|prune",
+    "cross-util containers list|remove-all",
+    "[build] in Cross.toml",
+    "[build.env] volumes/passthrough in Cross.toml",
+    "[build.dockerfile] in Cross.toml",
+    "[build.zig] in Cross.toml",
+    "[target.TARGET] image/runner/pre-build in Cross.toml",
+    "[target.TARGET.dockerfile] in Cross.toml",
+    "[target.TARGET.env] in Cross.toml",
+    "CROSS_CONTAINER_ENGINE env var",
+    "CROSS_CONFIG env var",
+    "CROSS_REMOTE env var",
+    "CROSS_CONTAINER_IN_CONTAINER env var",
+    "CROSS_CONTAINER_OPTS env var"
+  ]
+}

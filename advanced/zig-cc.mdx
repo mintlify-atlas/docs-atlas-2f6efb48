@@ -1,0 +1,99 @@
+---
+title: "zig cc Cross-Compilation"
+description: "Use zig cc as the C cross-compiler to target multiple glibc versions from a single Docker image."
+---
+
+`zig cc` is a C compiler frontend bundled with the [Zig](https://ziglang.org) toolchain. It wraps clang and provides a hermetic, self-contained cross-compilation environment that can target many architectures and specific glibc versions — without needing a separate sysroot per target.
+
+`cross` can delegate C compilation to `zig cc` instead of (or alongside) the GCC toolchain baked into the default Docker images.
+
+## Why zig cc
+
+- **Target a specific glibc version**: Produce binaries that run on older Linux systems (e.g. glibc 2.17) without maintaining separate Docker images per glibc version.
+- **Single image, many targets**: One Docker image with Zig installed covers a wide range of Linux GNU architectures.
+- **Faster iteration**: Avoids rebuilding custom images purely to change the minimum glibc version.
+
+<Note>
+  `zig cc` does not support every target `cross` ships images for. It covers a **subset of Linux GNU targets**. For unsupported targets, the default Docker image toolchain is used instead.
+</Note>
+
+## Configuration
+
+Zig support is configured in `Cross.toml` (or under `package.metadata.cross` in `Cargo.toml`) using either the `[build.zig]` key (applies to all targets) or `[target.TARGET.zig]` (applies to a specific target).
+
+### Global: `[build.zig]`
+
+<Accordion title="String shorthand — set version and enable">
+  Setting `zig` to a string is equivalent to enabling zig and setting the glibc version:
+
+  ```toml
+  [build]
+  zig = "2.17"
+  ```
+</Accordion>
+
+<Accordion title="Boolean shorthand — enable with default settings">
+  Setting `zig` to a boolean enables or disables zig cc without specifying a version:
+
+  ```toml
+  [build]
+  zig = true
+  ```
+</Accordion>
+
+<Accordion title="Table form — full control">
+  ```toml
+  [build.zig]
+  enable  = true       # enable or disable the use of zig cc
+  version = "2.17"     # the glibc version to target
+  image   = "myimage"  # a custom image containing zig (optional)
+  ```
+</Accordion>
+
+### Per-target: `[target.TARGET.zig]`
+
+The same three forms are available at the target level and take precedence over the global `[build.zig]` setting.
+
+<Accordion title="String shorthand — set version and enable for one target">
+  ```toml
+  [target.aarch64-unknown-linux-gnu]
+  zig = "2.17"
+  ```
+</Accordion>
+
+<Accordion title="Boolean shorthand — enable for one target">
+  ```toml
+  [target.aarch64-unknown-linux-gnu]
+  zig = true
+  ```
+</Accordion>
+
+<Accordion title="Table form — full control per target">
+  ```toml
+  [target.aarch64-unknown-linux-gnu.zig]
+  enable  = true       # enable or disable the use of zig cc
+  version = "2.17"     # the glibc version to target
+  image   = "myimage"  # a custom image containing zig (optional)
+  ```
+</Accordion>
+
+## Configuration Reference
+
+| Key | Type | Description |
+|---|---|---|
+| `enable` | `bool` | Enable or disable `zig cc` for this scope. |
+| `version` | `string` | The glibc version to target (e.g. `"2.17"`). |
+| `image` | `string` | A custom Docker image that provides the `zig` binary. |
+
+## When to Prefer zig cc
+
+| Situation | Recommendation |
+|---|---|
+| Need binaries compatible with an older glibc (e.g. CentOS 7 / glibc 2.17) | Use `zig cc` with `version = "2.17"` |
+| Targeting a Linux GNU architecture supported by zig | Use `zig cc` |
+| Targeting Android, musl, Windows, macOS, bare-metal, or other non-Linux-GNU targets | Use the default Docker image |
+| Need C++ standard library interop that zig does not yet fully support | Use the default Docker image |
+
+<Tip>
+  Prefer setting `zig` at the `[target.TARGET.zig]` level rather than globally under `[build.zig]` — this avoids accidentally enabling zig for targets it does not support.
+</Tip>

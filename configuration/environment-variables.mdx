@@ -1,0 +1,145 @@
+---
+title: "Environment Variables"
+description: "Complete reference for all environment variables recognized by cross, including passthrough rules and variables that are blocked from the build environment."
+---
+
+`cross` reads a set of environment variables to control its behavior. In addition, every option available in the [config file](/configuration/config-file) can be expressed as an environment variable, and environment variables always take the highest priority.
+
+## Cross runtime variables
+
+These variables configure how `cross` itself operates.
+
+| Variable | Description |
+|----------|-------------|
+| `CROSS_CONTAINER_ENGINE` | The container engine to use. Defaults to `docker`, then `podman`, whichever is found first. Example: `docker`. |
+| `CROSS_CONFIG` | Path to a custom `cross` config file. Overrides the default `Cross.toml` lookup. |
+| `CROSS_REMOTE` | Set to `true` to inform `cross` it is using a remote container engine. Uses data volumes instead of local bind mounts. |
+| `CROSS_CONTAINER_IN_CONTAINER` | Set to `true` to inform `cross` that it is itself running inside a container. |
+| `CROSS_CONTAINER_OPTS` | Additional arguments passed to the container engine during `$engine run`. Example: `--env MYVAR=1`. |
+| `CROSS_BUILD_OPTS` | Space-separated flags added when building a custom image. Example: `--network=host`. |
+| `CROSS_BUILD_DOCKERFILE` | Path to a custom Dockerfile to use for all targets. |
+| `CROSS_DEBUG` | Set to any non-empty value to print debugging information from `cross`. |
+| `CROSS_COMPATIBILITY_VERSION` | Use older `cross` behavior. Example: `0.2.1`. |
+| `CROSS_CUSTOM_TOOLCHAIN` | Inform `cross` that `rustup` is using a custom toolchain and should not attempt to add targets or install components. Useful with `cargo-bisect-rustc`. |
+| `CROSS_CUSTOM_TOOLCHAIN_COMPAT` | A descriptive name for a custom toolchain so `cross` can convert it to a fully-qualified toolchain name. |
+| `CROSS_ROOTLESS_CONTAINER_ENGINE` | Whether the container engine runs as root or is rootless. If `auto` or unset, `docker` is assumed to run as root and all other engines are assumed rootless. |
+| `CROSS_CONTAINER_USER_NAMESPACE` | Custom container user namespace. Set to `none` to disable user namespaces. If unset or `auto`, the default namespace is used. |
+| `CROSS_NO_WARNINGS` | Set to `1` to treat `cross` warnings as errors (panic before building). Set to `0` to disable. Implicitly enabled in CI pipelines. |
+| `CROSS_CONTAINER_ENGINE_NO_BUILDKIT` | Set to any non-empty value to indicate the container engine does not have `buildx` / BuildKit support when building custom images. |
+
+## Container identity variables
+
+| Variable | Description |
+|----------|-------------|
+| `CROSS_CONTAINER_UID` | User identifier to use inside the container. Example: `1000`. |
+| `CROSS_CONTAINER_GID` | Group identifier to use inside the container. Example: `1000`. |
+
+## Build variables
+
+| Variable | Description |
+|----------|-------------|
+| `CARGO_BUILD_TARGET` | Default target triple, equivalent to passing `--target`. |
+| `QEMU_STRACE` | When set, prints a backtrace of system calls from non-x86_64 binaries during `cross run`. |
+| `NIX_STORE` | Path to the Nix store directory. Example: `/nix/store`. |
+
+## Config-file options as environment variables
+
+Every option in `Cross.toml` can be set via an environment variable. The naming convention is:
+
+- Replace `.` with `_`
+- Convert target triple separators (`-`) to `_`
+- Uppercase everything
+- Prefix with `CROSS_`
+
+**Example:**
+
+```bash
+# Equivalent to target.aarch64-unknown-linux-gnu.dockerfile = "foo" in Cross.toml
+CROSS_TARGET_AARCH64_UNKNOWN_LINUX_GNU_DOCKERFILE=foo cross build --target aarch64-unknown-linux-gnu
+```
+
+---
+
+## Environment variable passthrough
+
+By default, `cross` does **not** forward most host environment variables into the build container. This is a deliberate safe default: it prevents the host shell environment from leaking into the inner build environment.
+
+### Automatically passed variables
+
+Variables that `cross` or `cargo` need to function are forwarded automatically. This includes:
+
+- All variables starting with `CARGO_` (with exceptions listed below)
+- All variables starting with `CROSS_` (with exceptions listed below)
+- `RUSTFLAGS`
+- `CARGO_TARGET_<TARGET>_RUSTFLAGS`
+
+### Blocked variables
+
+The following variables are **never** forwarded into the build container because they are managed by `cross` itself or conflict with the build environment:
+
+| Blocked variable |
+|-----------------|
+| `CARGO_HOME` |
+| `CARGO_TARGET_DIR` |
+| `CARGO_BUILD_TARGET_DIR` |
+| `CARGO_BUILD_RUSTC` |
+| `CARGO_BUILD_RUSTC_WRAPPER` |
+| `CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER` |
+| `CARGO_BUILD_RUSTDOC` |
+| `CROSS_RUNNER` |
+| `CROSS_RUSTC_MAJOR_VERSION` |
+| `CROSS_RUSTC_MINOR_VERSION` |
+| `CROSS_RUSTC_PATCH_VERSION` |
+
+### Passing additional variables
+
+To forward variables not included in the automatic set, use `build.env.passthrough` in your `Cross.toml`:
+
+```toml
+[build.env]
+passthrough = [
+    "RUST_BACKTRACE",
+    "RUST_LOG",
+    "TRAVIS",
+]
+```
+
+To forward variables only for a specific target:
+
+```toml
+[target.aarch64-unknown-linux-gnu.env]
+passthrough = [
+    "RUST_DEBUG",
+]
+```
+
+**Fixed-value passthrough:**
+
+You can also pass a variable with a value that overrides whatever the host has:
+
+```toml
+[build.env]
+passthrough = [
+    "VAR1_ARG",           # uses the host value of $VAR1_ARG
+    "VAR2_ARG=VALUE",     # always sets VAR2_ARG=VALUE, ignoring the host
+]
+```
+
+### Mounting host volumes
+
+To mount host filesystem paths inside the container:
+
+```toml
+[build.env]
+volumes = [
+    "VOL1_ARG",                   # mounts path from $VOL1_ARG on the host
+    "VOL2_ARG=/path/to/volume",   # always mounts /path/to/volume
+]
+```
+
+Per-target volume mounts work the same way under `[target.TARGET.env]`:
+
+```toml
+[target.x86_64-unknown-linux-gnu.env]
+volumes = ["VOL1_ARG", "VOL2_ARG=/path/to/volume"]
+```

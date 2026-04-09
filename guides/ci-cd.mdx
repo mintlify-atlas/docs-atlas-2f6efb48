@@ -1,0 +1,321 @@
+---
+title: "CI/CD Integration"
+description: "How to use cross in continuous integration and deployment pipelines, including GitHub Actions workflows, Docker-in-Docker setups, remote Docker daemons, and build caching."
+---
+
+`cross` works well in CI/CD environments. This guide covers common patterns for
+GitHub Actions and other CI systems.
+
+## Environment detection
+
+`cross` automatically detects when it is running inside a CI pipeline by checking
+the `CI` environment variable (set to `true` by GitHub Actions, GitLab CI, CircleCI,
+and most other CI providers).
+
+When CI is detected, `cross` enables strict warning behaviour: any warnings emitted
+by `cross` itself will cause the build to fail immediately. You can also enable this
+explicitly with:
+
+```bash
+CROSS_NO_WARNINGS=1 cross build --target aarch64-unknown-linux-gnu
+```
+
+Set `CROSS_NO_WARNINGS=0` to disable this behaviour even when running inside CI.
+
+## GitHub Actions
+
+### Basic workflow
+
+The following workflow installs `cross` and builds your crate for multiple targets
+using a build matrix:
+
+```yaml
+name: Cross-compile
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  cross-build:
+    name: Build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-unknown-linux-gnu
+          - armv7-unknown-linux-gnueabihf
+          - x86_64-unknown-linux-musl
+          - aarch64-unknown-linux-musl
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build
+        run: cross build --target ${{ matrix.target }} --release
+```
+
+### Including cross test
+
+To also run tests for targets that support QEMU-based testing, extend the matrix
+with a `test` flag and conditionally run `cross test`:
+
+```yaml
+name: Cross-compile and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  cross:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            test: true
+          - target: armv7-unknown-linux-gnueabihf
+            test: true
+          - target: x86_64-unknown-linux-musl
+            test: true
+          - target: riscv64gc-unknown-linux-gnu
+            test: true
+          - target: powerpc64le-unknown-linux-gnu
+            test: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build
+        run: cross build --target ${{ matrix.target }} --release
+
+      - name: Test
+        if: matrix.test
+        run: cross test --target ${{ matrix.target }}
+```
+
+<Note>
+`cross test` runs unit tests **sequentially** inside QEMU. This means tests that
+spawn threads may be slower or more likely to fail than on native hardware. See
+[QEMU limitations](#qemu-limitations-in-cross-test) below.
+</Note>
+
+## Docker-in-Docker
+
+When `cross` itself runs inside a container (for example, in a CI system that
+uses Docker-based job runners), it needs access to the **host's** Docker daemon
+in order to launch cross-compilation containers.
+
+### Socket mounting
+
+The standard approach is to mount the Docker socket into the CI container:
+
+```bash
+docker run \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v .:/project \
+  -w /project \
+  my/ci-image:latest \
+  cross build --target mips64-unknown-linux-gnuabi64
+```
+
+### CROSS_CONTAINER_IN_CONTAINER
+
+When running `cross` from inside a container, set `CROSS_CONTAINER_IN_CONTAINER=true`
+so that `cross` knows it must find and mount the correct host paths into the
+cross-compilation container:
+
+```yaml
+- name: Build (container-in-container)
+  env:
+    CROSS_CONTAINER_IN_CONTAINER: "true"
+  run: cross build --target aarch64-unknown-linux-gnu --release
+```
+
+You can also bake this into a reusable CI image:
+
+```dockerfile
+FROM rust:1
+
+# Inform cross that it is running inside a container
+ENV CROSS_CONTAINER_IN_CONTAINER=true
+
+# Install cross
+RUN cargo install cross --git https://github.com/cross-rs/cross
+```
+
+<Warning>
+Docker-in-Docker with `cross` requires the **overlayfs2** storage driver on the
+host. Other storage drivers (e.g., `vfs`, `devicemapper`) are not supported.
+Additionally, the parent container must not be stopped before the child container
+finishes, as the child mounts the parent's overlayfs.
+</Warning>
+
+## Remote Docker daemon
+
+If your CI environment provides a remote Docker daemon (for example via
+`DOCKER_HOST`), set `CROSS_REMOTE=1` to tell `cross` to use data volumes instead
+of bind mounts:
+
+```bash
+CROSS_REMOTE=1 DOCKER_HOST=tcp://docker:2375/ \
+  cross build --target arm-unknown-linux-gnueabihf
+```
+
+In a GitHub Actions workflow:
+
+```yaml
+- name: Build (remote Docker)
+  env:
+    CROSS_REMOTE: "1"
+    DOCKER_HOST: tcp://docker:2375/
+  run: cross build --target arm-unknown-linux-gnueabihf --release
+```
+
+<Info>
+When `CROSS_REMOTE=1` is set, `cross` copies your project files and the Rust
+toolchain into Docker data volumes on the remote host. By default the cargo
+registry and build cache are **not** copied. To copy the registry (e.g. for
+private dependencies), also set `CROSS_REMOTE_COPY_REGISTRY=1`.
+</Info>
+
+## Caching Docker images
+
+Pulling the `cross` Docker images on every CI run adds significant latency. Use
+your CI provider's layer caching to avoid this.
+
+### GitHub Actions — cache Docker layers
+
+```yaml
+- name: Set up Docker Buildx
+  uses: docker/setup-buildx-action@v3
+
+- name: Cache Docker layers
+  uses: actions/cache@v4
+  with:
+    path: /tmp/.buildx-cache
+    key: ${{ runner.os }}-buildx-${{ matrix.target }}-${{ github.sha }}
+    restore-keys: |
+      ${{ runner.os }}-buildx-${{ matrix.target }}-
+
+- name: Pull cross image (cache-friendly)
+  run: docker pull ghcr.io/cross-rs/${{ matrix.target }}:main || true
+```
+
+## Choosing the container engine
+
+By default `cross` tries Docker first, then Podman. To pin a specific engine,
+set `CROSS_CONTAINER_ENGINE`:
+
+```yaml
+- name: Build with Podman
+  env:
+    CROSS_CONTAINER_ENGINE: podman
+  run: cross build --target aarch64-unknown-linux-gnu --release
+```
+
+## QEMU limitations in cross test
+
+`cross test` works by emulating the target architecture with QEMU, which imposes
+some constraints that CI pipelines should account for:
+
+- Tests run **sequentially**. QEMU becomes unstable when multiple threads are
+  spawned concurrently, so `cross` serialises all unit test execution.
+- Tests that spawn threads are more likely to fail or hang.
+- Test runs are significantly slower than native execution.
+
+For targets where QEMU emulation is not reliable, set `test: false` in your matrix
+and rely on `cross build` only.
+
+## Debugging CI failures
+
+If a build fails in CI and you need more information:
+
+```yaml
+- name: Build (debug mode)
+  env:
+    CROSS_DEBUG: "1"
+  run: cross build --target aarch64-unknown-linux-gnu
+```
+
+`CROSS_DEBUG=1` prints detailed internal information about how `cross` is
+configuring and invoking the container engine, which is useful for diagnosing
+image selection, volume mounting, or environment passthrough issues.
+
+## Full example workflow
+
+A production-ready workflow combining build, test, and caching:
+
+```yaml
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  cross:
+    name: cross (${{ matrix.target }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-unknown-linux-gnu
+            test: true
+          - target: aarch64-unknown-linux-musl
+            test: true
+          - target: armv7-unknown-linux-gnueabihf
+            test: true
+          - target: x86_64-unknown-linux-musl
+            test: true
+          - target: powerpc64le-unknown-linux-gnu
+            test: true
+          - target: s390x-unknown-linux-gnu
+            test: true
+          - target: riscv64gc-unknown-linux-gnu
+            test: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build
+        run: cross build --target ${{ matrix.target }} --release
+
+      - name: Test
+        if: matrix.test
+        run: cross test --target ${{ matrix.target }}
+```

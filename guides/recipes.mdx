@@ -1,0 +1,382 @@
+---
+title: "Recipes"
+description: "Common recipes and solutions for cross-compilation scenarios, including OpenSSL, sccache, Redoxer, C++ build systems, and Clang on CentOS 7."
+---
+
+This page contains recipes for common use cases when cross-compiling with `cross`.
+
+<AccordionGroup>
+
+<Accordion title="OpenSSL">
+
+You can either use the vendored or system packages for the
+[openssl](https://crates.io/crates/openssl) crate.
+
+### Vendored
+
+The simplest approach is to enable the `vendored` feature of the `openssl` crate. This
+compiles OpenSSL from source as part of your build, requiring no system packages in the
+cross-compilation image.
+
+Add the following to your `Cargo.toml`:
+
+```toml
+[dependencies]
+openssl = { version = "0.10", features = ["vendored"] }
+```
+
+<Tip>
+The vendored feature is the easiest option and works out of the box with all `cross`
+images, but increases compile times since OpenSSL is compiled from source every build.
+</Tip>
+
+### Pre-build Hook
+
+To install OpenSSL from system packages using `apt-get`, add a `pre-build` hook to
+your `Cross.toml`. The special `$CROSS_DEB_ARCH` variable is automatically set by
+`cross` to the correct Debian architecture name for your target.
+
+```toml
+[target.x86_64-unknown-linux-gnu]
+pre-build = [
+    "dpkg --add-architecture $CROSS_DEB_ARCH",
+    "apt-get update && apt-get install --assume-yes libssl-dev:$CROSS_DEB_ARCH"
+]
+```
+
+### Custom Dockerfile
+
+For full control, you can write a custom Dockerfile that installs OpenSSL at image
+build time. A sample Dockerfile for `aarch64` with OpenSSL support is:
+
+```dockerfile
+FROM ghcr.io/cross-rs/aarch64-unknown-linux-gnu:edge
+RUN dpkg --add-architecture arm64
+RUN apt-get update && apt-get install --assume-yes libssl-dev:arm64
+```
+
+Build this image and reference it in your `Cross.toml` as described in the
+[Custom Images](/custom-images/overview) documentation.
+
+</Accordion>
+
+<Accordion title="sccache">
+
+[sccache](https://github.com/mozilla/sccache) is a compiler cache that can
+dramatically speed up repeated builds. Integrating it with `cross` involves four
+steps: creating an install script, extending a Dockerfile, configuring `Cross.toml`
+to pass through environment variables, and running `cross` with the appropriate env vars.
+
+<Steps>
+
+<Step title="Create the sccache install script">
+
+Create a script named `sccache.sh` in your project (make sure it is executable with
+`chmod +x sccache.sh`). Choose either the pre-built binary approach or building from
+source.
+
+**Option A: Pre-built Binary**
+
+Downloads the latest sccache release binary directly from GitHub:
+
+```bash
+#!/bin/bash
+
+set -x
+set -euo pipefail
+
+# shellcheck disable=SC1091
+. lib.sh
+
+main() {
+    local triple
+    local tag
+    local td
+    local url="https://github.com/mozilla/sccache"
+    triple="${1}"
+
+    install_packages unzip tar
+
+    # Download our package, then install our binary.
+    td="$(mktemp -d)"
+    pushd "${td}"
+    tag=$(git ls-remote --tags --refs --exit-code \
+        "${url}" \
+        | cut -d/ -f3 \
+        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+        | sort --version-sort \
+        | tail -n1)
+    curl -LSfs "${url}/releases/download/${tag}/sccache-${tag}-${triple}.tar.gz" \
+        -o sccache.tar.gz
+    tar -xvf sccache.tar.gz
+    rm sccache.tar.gz
+    cp "sccache-${tag}-${triple}/sccache" "/usr/bin/sccache"
+    chmod +x "/usr/bin/sccache"
+
+    # clean up our install
+    purge_packages
+    popd
+    rm -rf "${td}"
+    rm "${0}"
+}
+
+main "${@}"
+```
+
+**Option B: From Source**
+
+Builds sccache from source for the target architecture. It is highly recommended to
+use the vendored OpenSSL feature when building from source:
+
+```bash
+#!/bin/bash
+
+set -x
+set -euo pipefail
+
+# shellcheck disable=SC1091
+. lib.sh
+
+main() {
+    local triple
+    local tag
+    local td
+    local url="https://github.com/mozilla/sccache"
+    triple="${1}"
+
+    install_packages ca-certificates curl unzip
+
+    # install rust and cargo to build sccache
+    export RUSTUP_HOME=/tmp/rustup
+    export CARGO_HOME=/tmp/cargo
+    curl --retry 3 -sSfL https://sh.rustup.rs -o rustup-init.sh
+    sh rustup-init.sh -y --no-modify-path
+    rm rustup-init.sh
+    export PATH="${CARGO_HOME}/bin:${PATH}"
+    rustup target add "${triple}"
+
+    # download the source code from the latest sccache release
+    td="$(mktemp -d)"
+    pushd "${td}"
+    tag=$(git ls-remote --tags --refs --exit-code \
+        "${url}" \
+        | cut -d/ -f3 \
+        | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+        | sort --version-sort \
+        | tail -n1)
+    curl -LSfs "${url}/archive/refs/tags/${tag}.zip" \
+        -o sccache.zip
+    unzip sccache.zip
+    mv "sccache-${tag//v/}" sccache
+    rm sccache.zip
+
+    # build from source for the desired architecture
+    # you can also use additional features here
+    cd sccache
+    cargo build --release --target "${triple}" \
+        --features=all,"openssl/vendored"
+    cp "target/${triple}/release/sccache" "/usr/bin/sccache"
+
+    # clean up our install
+    rm -r "${RUSTUP_HOME}" "${CARGO_HOME}"
+    purge_packages
+    popd
+    rm -rf "${td}"
+    rm "${0}"
+}
+
+main "${@}"
+```
+
+</Step>
+
+<Step title="Extend the Dockerfile">
+
+Create a Dockerfile saved as `Dockerfile.${target}`, replacing `${target}` with your
+desired target triple (e.g., `x86_64-unknown-linux-musl`).
+
+```dockerfile
+FROM ghcr.io/cross-rs/${target}:main
+ARG DEBIAN_FRONTEND=noninteractive
+
+COPY sccache.sh /
+RUN /sccache.sh x86_64-unknown-linux-musl
+
+ENV RUSTC_WRAPPER="/usr/bin/sccache"
+```
+
+Build the image with:
+
+```bash
+docker build --tag ${target}:sccache \
+    --file Dockerfile.${target} .
+```
+
+</Step>
+
+<Step title="Configure Cross.toml">
+
+In `Cross.toml`, point your target at the custom image and declare which sccache
+environment variables should be passed through from the host shell into the container:
+
+```toml
+[target.${target}]
+image = "${target}:sccache"
+
+[build.env]
+passthrough = [
+    "SCCACHE_ERROR_LOG",
+    "SCCACHE_LOG",
+    "SCCACHE_AZURE_CONNECTION_STRING",
+    "SCCACHE_AZURE_BLOB_CONTAINER",
+    "SCCACHE_DIR",
+]
+```
+
+</Step>
+
+<Step title="Build with sccache">
+
+Run `cross` with your sccache environment variables set in the calling shell:
+
+```bash
+SCCACHE_LOG=trace SCCACHE_DIR=/path/to/sccache/cache \
+    cross build --target "${target}" --verbose
+```
+
+</Step>
+
+</Steps>
+
+</Accordion>
+
+<Accordion title="Redoxer">
+
+[Redox OS](https://www.redox-os.org/) targets require installing the Redoxer
+toolchain and its dependencies inside a custom Docker image.
+
+<Note>
+Redoxer requires a base Ubuntu version of **20.04**. You will need to build the
+images with [newer Linux versions](https://github.com/cross-rs/cross/wiki/FAQ#newer-linux-versions)
+to satisfy this requirement.
+</Note>
+
+Redoxer support is implemented by:
+
+1. Starting from a compatible Ubuntu 20.04 base image
+2. Installing the necessary system dependencies
+3. Installing Redoxer and its toolchain inside the image
+4. Referencing the custom image in your `Cross.toml`
+
+See the [redoxer recipe](https://github.com/cross-rs/wiki_assets/tree/main/Recipes/redoxer)
+on GitHub for a complete working project with a custom Dockerfile.
+
+</Accordion>
+
+<Accordion title="vcpkg, Meson, and Conan">
+
+C++ projects often have complex build systems due to a myriad of dependencies,
+competing build systems, and the lack of a built-in package manager. Some of the most
+popular build systems include GNU Make, CMake, and [Meson](https://mesonbuild.com/),
+and the two most popular package managers are [vcpkg](https://vcpkg.io/en/index.html)
+and [Conan](https://conan.io/).
+
+### Example: zlib with Meson and Conan
+
+The following shows how to cross-compile a project with an external `zlib` dependency
+using Meson and Conan.
+
+**conanfile.py** — declares the Conan dependencies and build method:
+
+```python
+from conans import ConanFile, Meson
+
+class ZlibExec(ConanFile):
+    name = "zlibexec"
+    version = "0.1"
+    settings = "os", "compiler", "build_type", "arch"
+    generators = "cmake", "pkg_config"
+    requires = "zlib/1.2.11"
+
+    def build(self):
+        meson = Meson(self)
+        meson.configure(build_folder="build")
+        meson.build()
+```
+
+**meson.build** — defines the Meson build targets:
+
+```meson
+project('zlibexec', 'cpp')
+executable('zlibexec', 'zlib.cc', dependencies: dependency('zlib'))
+```
+
+Build the project with:
+
+```bash
+mkdir build && cd build
+conan install .. --build
+meson ..
+conan build ..
+```
+
+### Integration with Rust
+
+The cross-compilation magic is provided by custom Dockerfiles that have Meson, Conan,
+and vcpkg installed, with CMake toolchains and Meson configurations that automatically
+cross-compile for the desired architecture. These images are built automatically when
+running `cross` via [pre-build hooks](/configuration/config-file).
+
+To integrate C/C++ builds with Rust, rather than invoking the `meson` or `cmake`
+commands directly, use the Rust crates that wrap them:
+
+- [meson-rs](https://docs.rs/meson/1.0.0/meson/) — configure and build Meson projects
+- [cmake-rs](https://docs.rs/cmake/latest/cmake/) — configure and build CMake projects
+
+<Tip>
+See the complete [vcpkg recipe project](https://github.com/cross-rs/wiki_assets/tree/main/Recipes/vcpkg)
+on GitHub for working examples using CMake + Conan, Meson + Conan, and CMake + vcpkg.
+</Tip>
+
+</Accordion>
+
+<Accordion title="Using Clang and Software Collections on CentOS 7">
+
+To use Clang on CentOS 7, you must install the SCL (Software Collections) repository,
+the LLVM toolset, and set the necessary environment variables pointing to clang and LLVM.
+
+### Dockerfile
+
+```dockerfile
+FROM ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main-centos
+
+RUN yum update -y && \
+    yum install centos-release-scl -y && \
+    yum install llvm-toolset-7 -y
+
+ENV LIBCLANG_PATH=/opt/rh/llvm-toolset-7/root/usr/lib64/ \
+    LIBCLANG_STATIC_PATH=/opt/rh/llvm-toolset-7/root/usr/lib64/ \
+    CLANG_PATH=/opt/rh/llvm-toolset-7/root/usr/bin/clang
+```
+
+The three environment variables configure crates that need to find Clang/LLVM at build
+time (such as [bindgen](https://docs.rs/bindgen/latest/bindgen/)):
+
+| Variable | Purpose |
+|---|---|
+| `LIBCLANG_PATH` | Directory containing the shared `libclang` library |
+| `LIBCLANG_STATIC_PATH` | Directory containing the static `libclang` archive |
+| `CLANG_PATH` | Full path to the `clang` binary |
+
+Build this image and reference it in your `Cross.toml` as described in the
+[Custom Images](/custom-images/overview) documentation.
+
+<Note>
+The CentOS 7 base image uses an older GCC (4.8.5) and glibc (2.17). If you only need
+Clang/LLVM tooling without CentOS 7 compatibility, prefer the standard Debian-based
+images instead.
+</Note>
+
+</Accordion>
+
+</AccordionGroup>

@@ -1,0 +1,75 @@
+---
+title: "Cargo Configuration"
+description: "How to configure cargo and rustc flags when cross-compiling with cross, including per-target linker, runner, and RUSTFLAGS settings."
+---
+
+When cross-compiling, `cargo` does not read generic environment variables such as `RUSTFLAGS` the same way it does for the host target. Per-target variables must be provided using the `CARGO_TARGET_${TARGET}_${OPTION}` naming scheme.
+
+<Note>
+  Some of these variables may already be set by the cross Docker image for a given target (such as the default runner). Overriding them without understanding their defaults can break the build.
+</Note>
+
+## Per-target cargo flags
+
+The three most commonly needed per-target variables are:
+
+| Variable | Description |
+|----------|-------------|
+| `CARGO_TARGET_${TARGET}_LINKER` | Specify a custom linker passed to `rustc` for the target. |
+| `CARGO_TARGET_${TARGET}_RUNNER` | Specify the wrapper used to execute compiled binaries for the target. |
+| `CARGO_TARGET_${TARGET}_RUSTFLAGS` | Add additional flags passed to `rustc` for the target. |
+
+The target triple is uppercased and hyphens are replaced with underscores. For example, `aarch64-unknown-linux-gnu` becomes `AARCH64_UNKNOWN_LINUX_GNU`.
+
+Any [cargo target configuration key](https://doc.rust-lang.org/cargo/reference/config.html#target) can be provided this way. The key name is converted to uppercase and hyphens become underscores. For example, a key named `foo-bar` becomes `CARGO_TARGET_${TARGET}_FOO_BAR`.
+
+## RUSTFLAGS vs CARGO_TARGET_${TARGET}_RUSTFLAGS
+
+When cross-compiling, `RUSTFLAGS` applies to all targets including build-script host code, which can cause unexpected failures. Use `CARGO_TARGET_${TARGET}_RUSTFLAGS` to restrict flags to the cross-compilation target only.
+
+| Variable | Applies to |
+|----------|-----------|
+| `RUSTFLAGS` | All targets (host and cross) — automatically forwarded by cross |
+| `CARGO_TARGET_${TARGET}_RUSTFLAGS` | Only the specified target |
+
+<Tip>
+  Prefer `CARGO_TARGET_${TARGET}_RUSTFLAGS` over `RUSTFLAGS` when cross-compiling to avoid affecting host build scripts and proc-macros.
+</Tip>
+
+## Example: run i686 binaries with QEMU
+
+To run `i686-unknown-linux-gnu` binaries using `qemu-i386`, first ensure your custom image contains QEMU, then run:
+
+```bash
+CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=qemu-i386 cross run --target i686-unknown-linux-gnu
+```
+
+The runner value (`qemu-i386`) is the executable that wraps the compiled binary when `cross run` (or `cargo test`) executes it inside the container.
+
+## Passing flags through Cross.toml
+
+You can also set the runner persistently in your `Cross.toml` so you do not need to set the environment variable on every invocation:
+
+```toml
+[target.i686-unknown-linux-gnu]
+runner = "qemu-user"
+```
+
+Valid `runner` values in the config file are `qemu-system`, `qemu-user`, and `native`.
+
+For a custom runner executable not covered by those three options, use the environment variable form:
+
+```bash
+CARGO_TARGET_I686_UNKNOWN_LINUX_GNU_RUNNER=qemu-i386 cross run --target i686-unknown-linux-gnu
+```
+
+## Setting a custom linker
+
+```bash
+CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc cross build --target aarch64-unknown-linux-gnu
+```
+
+## Further reading
+
+- [Cargo target configuration reference](https://doc.rust-lang.org/cargo/reference/config.html#target)
+- [Environment Variables reference](/configuration/environment-variables) — passthrough rules for getting these variables into the container
